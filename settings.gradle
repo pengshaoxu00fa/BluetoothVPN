@@ -1,2 +1,3 @@
 rootProject.name = "BluetoothVPN"
 include ':app'
+include ':netcore'

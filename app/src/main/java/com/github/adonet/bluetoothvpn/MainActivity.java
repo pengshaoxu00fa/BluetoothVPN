@@ -1,13 +1,19 @@
 package com.github.adonet.bluetoothvpn;
 
+import android.Manifest;
+import android.content.ComponentName;
+import android.content.Intent;
+import android.os.Build;
 import android.os.Bundle;
 
 import com.google.android.material.snackbar.Snackbar;
 
+import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AppCompatActivity;
 
 import android.view.View;
 
+import androidx.core.app.ActivityCompat;
 import androidx.navigation.NavController;
 import androidx.navigation.Navigation;
 import androidx.navigation.ui.AppBarConfiguration;
@@ -17,6 +23,8 @@ import com.github.adonet.bluetoothvpn.databinding.ActivityMainBinding;
 
 import android.view.Menu;
 import android.view.MenuItem;
+
+import java.security.Permission;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -37,10 +45,21 @@ public class MainActivity extends AppCompatActivity {
         NavigationUI.setupActionBarWithNavController(this, navController, appBarConfiguration);
 
         binding.fab.setOnClickListener(new View.OnClickListener() {
+            @RequiresApi(api = Build.VERSION_CODES.M)
             @Override
             public void onClick(View view) {
-                Snackbar.make(view, "Replace with your own action", Snackbar.LENGTH_LONG)
-                        .setAction("Action", null).show();
+//                Snackbar.make(view, "Replace with your own action", Snackbar.LENGTH_LONG)
+//                        .setAction("Action", null).show();
+                Intent intent = new Intent();
+//                intent.putExtra("package", getPackageName());
+                intent.setAction("cn.adonet.proxyevery.ACTION");
+//                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+//                ComponentName componentName = null;
+//                componentName = new ComponentName("cn.adonet.proxyevery", "cn.adonet.proxyevery.SettingActivity");
+//                intent.setComponent(componentName);
+                MainActivity.this.startActivity(intent);
+//                ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, 16);
+                //requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, 10);
             }
         });
     }
