@@ -3,8 +3,6 @@ package cn.adonet.netcore.util;
 import java.net.InetSocketAddress;
 
 import cn.adonet.netcore.service.BaseVpnService;
-import cn.adonet.netcore.tcpip.CommonMethods;
-import cn.adonet.netcore.tunel.IDataHandler;
 
 public class MainCore {
     private static MainCore mainCore = new MainCore();
@@ -19,8 +17,6 @@ public class MainCore {
 
     private volatile BaseVpnService mVpnService;
 
-    private volatile IDataHandler mDataHandler;
-
 
     public BaseVpnService getVpnService() {
         return mVpnService;
@@ -28,14 +24,6 @@ public class MainCore {
 
     public void setVpnService(BaseVpnService vpnService) {
         this.mVpnService = vpnService;
-    }
-
-    public IDataHandler getDataHandler() {
-        return mDataHandler;
-    }
-
-    public void setDataHandler(IDataHandler mDataHandler) {
-        this.mDataHandler = mDataHandler;
     }
 
 

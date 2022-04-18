@@ -4,6 +4,7 @@ package cn.adonet.netcore.protocol;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
@@ -15,8 +16,8 @@ import java.util.concurrent.locks.ReentrantLock;
 import cn.adonet.netcore.nat.NatSession;
 import cn.adonet.netcore.nat.NatSessionManager;
 import cn.adonet.netcore.tcpip.CommonMethods;
-import cn.adonet.netcore.tunel.Tunnel;
-import cn.adonet.netcore.tunel.TunnelFactory;
+import cn.adonet.netcore.tunel.base.ChannelBinder;
+import cn.adonet.netcore.tunel.base.IProxyChannel;
 import cn.adonet.netcore.util.DebugLog;
 import cn.adonet.netcore.util.MainCore;
 
@@ -26,14 +27,13 @@ import cn.adonet.netcore.util.MainCore;
  */
 public class TCPProxyServer implements Runnable {
 
+	final static ByteBuffer GL_BUFFER = ByteBuffer.allocate(20000);
 	private volatile boolean isStopped;
 	private short mPort;
 
 	private Selector mSelector;
 	private ServerSocketChannel mServerSocketChannel;
 	private Thread mServerThread;
-	private boolean isForVpn = false;
-	public ReentrantLock lock = new ReentrantLock(true);
 
 	public TCPProxyServer(int port) throws IOException {
 		mSelector = Selector.open();
@@ -45,10 +45,6 @@ public class TCPProxyServer implements Runnable {
 
 		DebugLog.i("TcpProxy listen on %s:%d success.\n", mServerSocketChannel.socket().getInetAddress()
 				.toString(), this.mPort & 0xFFFF);
-	}
-
-	public void setForVpn(boolean forVpn) {
-		isForVpn = forVpn;
 	}
 
 	/**
@@ -69,25 +65,25 @@ public class TCPProxyServer implements Runnable {
 
 	public void stop() {
 		isStopped = true;
-		lock.lock();
+		ChannelBinder.lock.lock();
 		if (mSelector != null) {
 			try {
 				mSelector.close();
-				mSelector = null;
 			} catch (Exception ex) {
 				DebugLog.e("TcpProxyServer mSelector.close() catch an exception: %s", ex);
 			}
+			mSelector = null;
 		}
 
 		if (mServerSocketChannel != null) {
 			try {
 				mServerSocketChannel.close();
-				mServerSocketChannel = null;
 			} catch (Exception ex) {
 				DebugLog.e("TcpProxyServer mServerSocketChannel.close() catch an exception: %s", ex);
 			}
+			mServerSocketChannel = null;
 		}
-		lock.unlock();
+		ChannelBinder.lock.unlock();
 		NatSessionManager.clearSession();
 		mServerThread.interrupt();
 	}
@@ -102,7 +98,7 @@ public class TCPProxyServer implements Runnable {
 			} catch (Exception e) {
 				break;
 			}
-			lock.lock();
+			ChannelBinder.lock.lock();
 			if (mSelector != null) {
 				Set<SelectionKey> keys = mSelector.selectedKeys();
 				if (keys != null) {
@@ -110,15 +106,15 @@ public class TCPProxyServer implements Runnable {
 					while (keyIterator.hasNext() && !isStopped) {
 						SelectionKey key = keyIterator.next();
 						if (key.isValid()) {
-							updateSessionLastTime(key);
 							if (key.isReadable()) {
-								((Tunnel) key.attachment()).onReadable(key);
+								//可以读取读取数据
+								read((ChannelBinder<SocketChannel>) key.attachment());
 							} else if (key.isWritable()) {
-								((Tunnel) key.attachment()).onWritable(key);
-							} else if (key.isConnectable()) {
-								((Tunnel) key.attachment()).onConnectable();
+								//可以写入数据
+								//write((ChannelBinder) key.attachment());
 							} else if (key.isAcceptable()) {
-								onAccepted();
+								//接收到连接消息
+								accepted();
 							}
 						} else {
 							//应该移除,是否应该移除通道？？？？
@@ -128,25 +124,13 @@ public class TCPProxyServer implements Runnable {
 					}
 				}
 			}
-			lock.unlock();
+			ChannelBinder.lock.unlock();
 		}
 		this.stop();
 		DebugLog.i("TcpServer thread exited.");
 	}
 
-	private void updateSessionLastTime(SelectionKey key) {
-		Object obj = key.attachment();
-		if (obj instanceof Tunnel) {
-			Tunnel tunnel = (Tunnel) obj;
-			if (tunnel.getNatSession() !=  null) {
-				tunnel.getNatSession().lastActivityTime = System.currentTimeMillis();
-			}
-			Tunnel bother = tunnel.getBrotherTunnel();
-			if (bother != null && bother.getNatSession() != null) {
-				bother.getNatSession().lastActivityTime = System.currentTimeMillis();
-			}
-		}
-	}
+
 
 	//获取目的地址
 	private InetSocketAddress getDestAddress(SocketChannel localChannel) {
@@ -159,30 +143,73 @@ public class TCPProxyServer implements Runnable {
 		}
 	}
 
-	void onAccepted() {
-		Tunnel localTunnel = null;
+	private void read(ChannelBinder<SocketChannel> binder){
 		try {
-			SocketChannel localChannel = mServerSocketChannel.accept();
-			localTunnel = TunnelFactory.wrap(localChannel, mSelector);
-
-			InetSocketAddress destAddress = getDestAddress(localChannel);
-			if (destAddress == null) {
-				throw new IllegalArgumentException("没设置目的地");
+			ByteBuffer buffer = GL_BUFFER;
+			buffer.clear();
+			int bytesRead = binder.localChannel.read(buffer);
+			if (bytesRead != -1) {
+				buffer.flip();
+				while (buffer.hasRemaining()) { //将读到的数据，转发给兄弟
+					binder.proxyChannel.write(buffer);
+				}
+			} else{
+				binder.close();
 			}
-			Tunnel remoteTunnel = TunnelFactory.createTunnelByConfig(destAddress, mSelector);
-			//关联兄弟
-			remoteTunnel.setBrotherTunnel(localTunnel);
-			localTunnel.setBrotherTunnel(remoteTunnel);
-			remoteTunnel.setForVpn(isForVpn);
-			remoteTunnel.connect(); //开始连接
 		} catch (Exception ex) {
 			if (DebugLog.IS_DEBUG) {
 				ex.printStackTrace(System.err);
 			}
+			DebugLog.e("onReadable catch an exception: %s %s  %s %s", ex,getClass());
+			if (binder != null) {
+				binder.close();
+			}
+		}
 
-			DebugLog.e("TcpProxyServer onAccepted catch an exception: %s", ex);
-			if (localTunnel != null) {
-				localTunnel.dispose();
+	}
+
+
+	private boolean writeLocal(ChannelBinder<SocketChannel> binder, ByteBuffer buffer) throws Exception{
+		while (buffer.hasRemaining()) {
+			binder.localChannel.write(buffer);
+		}
+		return true;
+	}
+
+	private void accepted() {
+		ChannelBinder binder = null;
+		try {
+			SocketChannel localChannel = mServerSocketChannel.accept();
+			binder = new ChannelBinder<SocketChannel>(){
+				@Override
+				public void onProxyChannelReady() {
+					try {
+						this.localChannel.register(mSelector, SelectionKey.OP_READ, this);
+					} catch (Exception e){
+						this.close();
+					}
+				}
+
+				@Override
+				public void onProxyChannelRead(Object obj) {
+					//回调
+					try {
+						writeLocal(this, (ByteBuffer)obj);
+					} catch (Exception e){
+						this.close();
+					}
+				}
+			};
+			binder.localChannel = localChannel;
+			//创建本地代理通道
+			binder.proxyChannel = null;
+			binder.proxyChannel.connect();
+		} catch (Exception ex) {
+			if (DebugLog.IS_DEBUG) {
+				ex.printStackTrace(System.err);
+			}
+			if (binder != null) {
+				binder.close();
 			}
 		}
 	}

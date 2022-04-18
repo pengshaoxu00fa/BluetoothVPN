@@ -5,7 +5,6 @@ import android.text.TextUtils;
 import java.io.Serializable;
 
 import cn.adonet.netcore.tcpip.CommonMethods;
-import cn.adonet.netcore.tunel.Tunnel;
 
 public class NatSession implements Serializable {
 	public static final int SESSION_TYPE_HTTP  = 1;

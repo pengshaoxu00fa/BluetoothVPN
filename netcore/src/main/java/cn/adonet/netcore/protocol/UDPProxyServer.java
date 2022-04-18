@@ -10,6 +10,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
+import java.nio.channels.SocketChannel;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -18,6 +19,8 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import cn.adonet.netcore.nat.UDPMap;
 import cn.adonet.netcore.tcpip.CommonMethods;
+import cn.adonet.netcore.tunel.base.ChannelBinder;
+import cn.adonet.netcore.tunel.base.IProxyChannel;
 import cn.adonet.netcore.util.LRU;
 import cn.adonet.netcore.util.MainCore;
 
@@ -30,8 +33,8 @@ public class UDPProxyServer implements Runnable{
 	public volatile boolean mStopped;
 	private Selector mSelector;
 	private DatagramChannel localChannel;
-	private LRU<Short, DatagramChannel> remoteChannels = new LRU<>(16, 0.8f, true, 256);
-	private HashMap<DatagramChannel, Short> localPorts = new HashMap<>(16);
+	private LRU<Short, IProxyChannel> remoteChannels = new LRU<>(16, 0.8f, true, 256);
+	private HashMap<IProxyChannel, Short> localPorts = new HashMap<>(16);
 	public ReentrantLock lock = new ReentrantLock(true);
 
 	private Thread         mWorkThread;
@@ -103,42 +106,47 @@ public class UDPProxyServer implements Runnable{
 			return;
 		}
 		try {
-			if (channel == localChannel) {
-				mByteBuffer.clear();
-				SocketAddress originAddress = localChannel.receive(mByteBuffer);
-				mByteBuffer.flip();
-				//建一个远程remote；
-				if (originAddress != null && originAddress instanceof InetSocketAddress) {
-					InetSocketAddress receiveAddress = (InetSocketAddress)originAddress;
-					short localPort = (short) receiveAddress.getPort();
-					DatagramChannel remoteChannel = remoteChannels.get(localPort);
-					if (remoteChannel == null ||
-							!remoteChannel.isOpen() ||
-							remoteChannel.socket() == null ||
-							remoteChannel.socket().isClosed()) {
-						remoteChannel = DatagramChannel.open();
-						remoteChannel.configureBlocking(false);
-						protect(remoteChannel.socket());
-						remoteChannels.put(localPort, remoteChannel);
-						localPorts.put(remoteChannel, localPort);
-						remoteChannel.register(mSelector, SelectionKey.OP_READ, remoteChannel);
-					}
+			mByteBuffer.clear();
+			SocketAddress originAddress = localChannel.receive(mByteBuffer);
+			mByteBuffer.flip();
+			//建一个远程remote；
+			if (originAddress != null && originAddress instanceof InetSocketAddress) {
+				InetSocketAddress receiveAddress = (InetSocketAddress)originAddress;
+				short localPort = (short) receiveAddress.getPort();
+				IProxyChannel remoteChannel = remoteChannels.get(localPort);
+				if (remoteChannel == null ||
+						!remoteChannel.isOpen()) {
 					UDPMap.Address addressInfo = UDPMap._TO.find(localPort);
-					if (addressInfo != null) {
-						InetSocketAddress address = new InetSocketAddress(CommonMethods.ipIntToString(addressInfo.ip), addressInfo.port);
-						remoteChannel.send(mByteBuffer, address);
-					}
-				}
+					ChannelBinder<DatagramChannel> binder = new ChannelBinder<DatagramChannel>() {
+						@Override
+						public void onProxyChannelRead(Object obj) {
+							//代理通道读取到数据后
+							//组合数据，通过localChannel发送回去
+//							short localPort = localPorts.get(channel);
+////							channel.configureBlocking(false);
+//							mByteBuffer.clear();
+//							InetSocketAddress socketAddress = (InetSocketAddress) channel.receive(mByteBuffer);
+//							Inet4Address address = (Inet4Address)socketAddress.getAddress();
+//							mByteBuffer.flip();
+//							UDPMap._FROM.map(localPort,CommonMethods.ipStringToInt(address.getHostAddress()), (short)(socketAddress.getPort()));
+//							try {
+//								localChannel.send(mByteBuffer, new InetSocketAddress(address.getHostAddress(), localPort & 0xFFFF));
+//							} catch (Exception e){
+//							}
 
-			} else {
-				short localPort = localPorts.get(channel);
-				channel.configureBlocking(false);
-				mByteBuffer.clear();
-				InetSocketAddress socketAddress = (InetSocketAddress) channel.receive(mByteBuffer);
-				Inet4Address address = (Inet4Address)socketAddress.getAddress();
-				mByteBuffer.flip();
-				UDPMap._FROM.map(localPort,CommonMethods.ipStringToInt(address.getHostAddress()), (short)(socketAddress.getPort()));
-				localChannel.send(mByteBuffer, new InetSocketAddress(address.getHostAddress(), localPort & 0xFFFF));
+						}
+
+						@Override
+						public void onProxyChannelReady() {
+
+						}
+					};
+					binder.localChannel = localChannel;
+					binder.proxyChannel = null;
+					remoteChannels.put(localPort, remoteChannel);
+					localPorts.put(remoteChannel, localPort);
+				}
+				remoteChannel.write(mByteBuffer);
 			}
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -147,13 +155,6 @@ public class UDPProxyServer implements Runnable{
 
 	}
 
-
-	private void protect(DatagramSocket socket) {
-		VpnService service = MainCore.getInstance().getVpnService();
-		if (service != null) {
-			service.protect(socket);
-		}
-	}
 
 	/**
 	 * 启动线程
@@ -190,10 +191,10 @@ public class UDPProxyServer implements Runnable{
 
 
 	public synchronized void clear(){
-		Iterator<Map.Entry<Short, DatagramChannel>> entries = remoteChannels.entrySet().iterator();
+		Iterator<Map.Entry<Short, IProxyChannel>> entries = remoteChannels.entrySet().iterator();
 		while (entries.hasNext()) {
-			Map.Entry<Short, DatagramChannel> entity = entries.next();
-			DatagramChannel channel= entity.getValue();
+			Map.Entry<Short, IProxyChannel> entity = entries.next();
+			IProxyChannel channel= entity.getValue();
 			try {
 				channel.close();
 			} catch (Exception e) {

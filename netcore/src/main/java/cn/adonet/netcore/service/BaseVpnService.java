@@ -292,7 +292,6 @@ public abstract class BaseVpnService extends android.net.VpnService implements R
 
 		try {
 			mTCPProxyServer = new TCPProxyServer(0);
-			mTCPProxyServer.setForVpn(true);
 		} catch (Exception e) {
 			mTCPProxyServer = null;
 			if (DebugLog.IS_DEBUG) {
